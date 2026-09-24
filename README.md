@@ -52,12 +52,9 @@
 │   └── 启动本地代理(解决跨域).bat
 │
 ├── docs/                       # 📚 开发协议与工程档案
-│   ├── MAP_SPEC.md             # 笛卡尔空间坐标协议标准规范 (NWM-CP v1.0)
-│   └── PROJECT_LOG.md          # 详细工程演进与测试日志
-│
-└── legacy/                     # 📦 历史扩展与原型备份
-    ├── 制图师 Cartograph.html   # 跑团探索叙事单页扩展应用
-    └── 制图师 Cartograph.html.bak
+    ├── MAP_SPEC.md             # 笛卡尔空间坐标协议标准规范 (NWM-CP v1.0)
+    └── PROJECT_LOG.md          # 详细工程演进与测试日志
+
 ```
 
 ---
