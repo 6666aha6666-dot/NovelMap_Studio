@@ -1,0 +1,2158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小说世界观坐标地图工作台 - NovelMap Studio</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React 18 -->
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel -->
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.7/babel.min.js"></script>
+  <!-- Google Fonts: Noto Serif SC & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Noto+Serif+SC:wght@500;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Noto Serif SC', serif;
+      background-color: #0f1117;
+      color: #e2e8f0;
+      user-select: none;
+    }
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* 自定义专业暗黑滚动条 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #181b26;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    /* 拟态PS网格背景 */
+    .ps-canvas-bg {
+      background-color: #1a1d27;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    const { useState, useRef, useEffect, useMemo } = React;
+
+    // ==========================================
+    // 0. 比例尺单位预设定义与空间尺度换算
+    // ==========================================
+    const UNIT_PRESETS = {
+      km: { id: 'km', label: '公里 (km)', desc: '标准大陆/行军尺度 (一日行军 25~40 km)', step: 10, defaultScale: 4.0 },
+      li: { id: 'li', label: '华里 (里)', desc: '东方仙侠/武侠国风 (1 公里 = 2 华里)', step: 20, defaultScale: 2.0 },
+      nm: { id: 'nm', label: '海里 (nm)', desc: '大航海/群岛争霸 (1 海里 ≈ 1.85 km)', step: 5, defaultScale: 6.0 },
+      au: { id: 'au', label: '天文单位 (AU)', desc: '恒星系/科幻近空 (日地距离)', step: 1, defaultScale: 15.0 },
+      ly: { id: 'ly', label: '光年 (ly)', desc: '银河星系/星际文明跨度', step: 1, defaultScale: 15.0 }
+    };
+
+    // ==========================================
+    // 1. 图层与类型颜色配置定义
+    // ==========================================
+    const LAYER_DEFINITIONS = [
+      { id: 'layer_territory', name: '国家疆域 (Territories)', icon: '🚩', defaultVisible: true },
+      { id: 'layer_terrain', name: '自然地貌 (Biomes)', icon: '🏜️', defaultVisible: true },
+      { id: 'layer_waters', name: '水系湖泊 (Waters)', icon: '🌊', defaultVisible: true },
+      { id: 'layer_mountains', name: '山脉脊线 (Mountains)', icon: '🏔️', defaultVisible: true },
+      { id: 'layer_roads', name: '交通路线 (Roads)', icon: '🛣️', defaultVisible: true },
+      { id: 'layer_settlements', name: '城镇聚落 (Settlements)', icon: '🏰', defaultVisible: true },
+      { id: 'layer_landmarks', name: '奇观秘境 (Landmarks)', icon: '✨', defaultVisible: true },
+    ];
+
+    const TYPE_STYLES = {
+      // 点状
+      city: { color: '#f59e0b', label: '核心城邦', layer: 'layer_settlements', symbol: '🏰', r: 8 },
+      town: { color: '#38bdf8', label: '城镇聚落', layer: 'layer_settlements', symbol: '🏘️', r: 6 },
+      village: { color: '#94a3b8', label: '乡村村落', layer: 'layer_settlements', symbol: '⛺', r: 4 },
+      fort: { color: '#ef4444', label: '要塞关卡', layer: 'layer_settlements', symbol: '🛡️', r: 6 },
+      landmark: { color: '#a855f7', label: '世界奇观', layer: 'layer_landmarks', symbol: '✨', r: 7 },
+      ruin: { color: '#eab308', label: '古代遗迹', layer: 'layer_landmarks', symbol: '🏛️', r: 6 },
+      // 线状
+      river: { color: '#38bdf8', strokeWidth: 3.5, label: '水系河流', layer: 'layer_waters', dash: '' },
+      mountain: { color: '#78716c', strokeWidth: 5, label: '险峻山脉', layer: 'layer_mountains', dash: '8,4' },
+      road: { color: '#f97316', strokeWidth: 2.5, label: '主干商道', layer: 'layer_roads', dash: '5,5' },
+      border: { color: '#ec4899', strokeWidth: 2, label: '国境边界', layer: 'layer_territory', dash: '3,3' },
+      // 面状 (圆集合)
+      plain: { fill: '#10b981', fillOpacity: 0.18, stroke: '#059669', label: '肥沃平原', layer: 'layer_terrain' },
+      desert: { fill: '#f59e0b', fillOpacity: 0.22, stroke: '#d97706', label: '广袤沙漠', layer: 'layer_terrain' },
+      snowfield: { fill: '#e0f2fe', fillOpacity: 0.35, stroke: '#38bdf8', label: '极地雪原', layer: 'layer_terrain' },
+      forest: { fill: '#059669', fillOpacity: 0.28, stroke: '#047857', label: '原始森林', layer: 'layer_terrain' },
+      lake: { fill: '#0284c7', fillOpacity: 0.35, stroke: '#0369a1', label: '内陆湖泊', layer: 'layer_waters' },
+      sea: { fill: '#1e40af', fillOpacity: 0.40, stroke: '#1d4ed8', label: '蔚蓝海域', layer: 'layer_waters' },
+      territory: { fill: '#8b5cf6', fillOpacity: 0.16, stroke: '#7c3aed', label: '势力疆域', layer: 'layer_territory' }
+    };
+
+    // ==========================================
+    // 2. 预置的丰富奇幻世界地图数据示例
+    // ==========================================
+    const DEFAULT_MAP_DATA = {
+      meta: {
+        worldName: "艾尔德隆大陆 (Aelderon)",
+        coordUnit: "km",
+        gridStep: 10, // 网格步长 10km
+        description: "由永冬雪原、苍翠中央大平原与南部烈日炎漠构成的古典高魔奇幻世界。"
+      },
+      points: [
+        { id: "c_capital", name: "王都·星辰之门", type: "city", coord: [0.0, 15.0], desc: "帝国权力中枢，建于白石悬崖之上的宏伟城邦，由四重拱卫护城。", faction: "艾尔德隆帝国" },
+        { id: "c_winter", name: "凛冬孤堡", type: "city", coord: [-65.0, 95.0], desc: "极北雪原的军事巨塞，终年风雪缭绕，盛产耐寒精铁。", faction: "北境誓约同盟" },
+        { id: "t_riverwind", name: "风语镇", type: "town", coord: [25.0, -10.0], desc: "天水河畔的繁华商港，往来商队的物资换乘与关税收纳之地。", faction: "艾尔德隆帝国" },
+        { id: "v_amber", name: "琥珀村", type: "village", coord: [-25.0, -20.0], desc: "出产树脂与珍稀草药的小村庄，居民世代与森林精灵交易。", faction: "自由平民" },
+        { id: "c_flame", name: "赤阳沙城", type: "city", coord: [75.0, -85.0], desc: "荒漠绿洲上的繁华集市城邦，黄金与香料之路的终点。", faction: "炎晶苏丹国" },
+        { id: "f_ironpass", name: "铁壁关卡", type: "fort", coord: [-35.0, 50.0], desc: "扼守南北天险咽喉要道，阻隔北境蛮族南侵的天下第一雄关。", faction: "艾尔德隆帝国" },
+        { id: "l_godtree", name: "生命母树遗迹", type: "ruin", coord: [-50.0, -60.0], desc: "第三纪元遗留的神树化石，周边流淌着高纯度的以太魔泉。", faction: "未知/秘境" }
+      ],
+      lines: [
+        {
+          id: "r_tianshui",
+          name: "天水河 (Tianshui River)",
+          type: "river",
+          points: [[-85.0, 110.0], [-55.0, 70.0], [-10.0, 35.0], [25.0, -10.0], [80.0, -35.0]],
+          desc: "发源自北境雪山，贯穿中央大平原向东南奔流的大陆母亲河。"
+        },
+        {
+          id: "m_spine",
+          name: "龙脊山脉 (Dragon Spine)",
+          type: "mountain",
+          points: [[-95.0, 75.0], [-50.0, 55.0], [-20.0, 48.0], [30.0, 60.0], [90.0, 85.0]],
+          desc: "横断大陆北部的险峻巨型褶皱山系，常年积雪，极难穿行。"
+        },
+        {
+          id: "rd_royal",
+          name: "帝国御道 (Imperial Highway)",
+          type: "road",
+          points: [[-35.0, 50.0], [0.0, 15.0], [25.0, -10.0], [75.0, -85.0]],
+          desc: "连接要塞、王都、港口并通往南部沙漠的石板铺筑帝国主干道。"
+        }
+      ],
+      areas: [
+        {
+          id: "a_snow",
+          name: "极北永冬雪原",
+          type: "snowfield",
+          circles: [
+            { center: [-70.0, 95.0], radius: 45.0 },
+            { center: [-30.0, 110.0], radius: 35.0 }
+          ],
+          desc: "极度酷寒的永冻之土，游荡着冰霜巨兽与远古部族。"
+        },
+        {
+          id: "a_plain",
+          name: "翡翠大平原",
+          type: "plain",
+          circles: [
+            { center: [0.0, 0.0], radius: 45.0 },
+            { center: [-25.0, -25.0], radius: 35.0 }
+          ],
+          desc: "气候宜人的温带大平原，大陆农业与人口最密集的粮仓。"
+        },
+        {
+          id: "a_desert",
+          name: "赤阳灼日大荒漠",
+          type: "desert",
+          circles: [
+            { center: [80.0, -80.0], radius: 50.0 },
+            { center: [40.0, -95.0], radius: 35.0 }
+          ],
+          desc: "炽热狂暴的无垠沙海，埋葬着无数商队与失落文明。"
+        },
+        {
+          id: "a_lake",
+          name: "明镜天池",
+          type: "lake",
+          circles: [
+            { center: [-15.0, 30.0], radius: 16.0 }
+          ],
+          desc: "龙脊山脉脚下的清澈高山淡水湖，湖心有古老水灵栖息。"
+        }
+      ]
+    };
+
+    // ==========================================
+    // 3. 核心空间几何数学工具库
+    // ==========================================
+    const GeoMath = {
+      // 欧氏距离 (km)
+      distance: (p1, p2) => Math.hypot(p2[0] - p1[0], p2[1] - p1[1]),
+
+      // 方位角转换为八方位文字
+      bearingText: (from, to) => {
+        const dx = to[0] - from[0];
+        const dy = to[1] - from[1]; // y向上为北(+km)
+        const angle = Math.atan2(dx, dy) * 180 / Math.PI; // 0=北, 90=东, 180=南, -90=西
+        if (angle >= -22.5 && angle < 22.5) return '正北';
+        if (angle >= 22.5 && angle < 67.5) return '东北';
+        if (angle >= 67.5 && angle < 112.5) return '正东';
+        if (angle >= 112.5 && angle < 157.5) return '东南';
+        if (angle >= 157.5 || angle < -157.5) return '正南';
+        if (angle >= -157.5 && angle < -112.5) return '西南';
+        if (angle >= -112.5 && angle < -67.5) return '正西';
+        return '西北';
+      },
+
+      // 点到线段的最短距离 (km)
+      pointToSegmentDistance: (p, a, b) => {
+        const l2 = (b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2;
+        if (l2 === 0) return GeoMath.distance(p, a);
+        let t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const proj = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+        return GeoMath.distance(p, proj);
+      },
+
+      // 点到折线的最短距离 (km)
+      pointToLineDistance: (p, points) => {
+        if (!points || points.length === 0) return Infinity;
+        if (points.length === 1) return GeoMath.distance(p, points[0]);
+        let minDist = Infinity;
+        for (let i = 0; i < points.length - 1; i++) {
+          const d = GeoMath.pointToSegmentDistance(p, points[i], points[i + 1]);
+          if (d < minDist) minDist = d;
+        }
+        return minDist;
+      },
+
+      // 判定点是否位于某面域内部 (圆包络判定)
+      isPointInArea: (p, circles) => {
+        if (!circles || circles.length === 0) return false;
+        return circles.some(c => GeoMath.distance(p, c.center) <= c.radius);
+      },
+
+      // 自动分析全图各点位、线条、面域分布报告（无视觉完全可读的精准纯文本空间拓扑）
+      generateSpatialAnalysisReport: (mapData) => {
+        const u = mapData.meta.coordUnit || 'km';
+        let md = `## 🗺️ 《${mapData.meta.worldName}》空间坐标与地貌拓扑分析报告\n`;
+        md += `> 单位：${u} | 坐标轴：以 (0.0, 0.0) 为世界原点，X轴正东(+${u})/负西(-${u})，Y轴正北(+${u})/负南(-${u})\n\n`;
+
+        // 1. 各重要点位及周边邻接
+        md += `### 📍 重要城市与聚落分布（共 ${mapData.points.length} 处）：\n`;
+        mapData.points.forEach(pt => {
+          // 寻找最近的聚落
+          const neighbors = mapData.points
+            .filter(o => o.id !== pt.id)
+            .map(o => ({
+              name: o.name,
+              dist: Math.round(GeoMath.distance(pt.coord, o.coord) * 10) / 10,
+              dir: GeoMath.bearingText(pt.coord, o.coord)
+            }))
+            .sort((a, b) => a.dist - b.dist)
+            .slice(0, 2);
+
+          // 寻找位于哪个面域
+          const inAreas = mapData.areas
+            .filter(a => GeoMath.isPointInArea(pt.coord, a.circles))
+            .map(a => a.name);
+
+          // 距离最近的水系或道路
+          const nearestLines = mapData.lines.map(l => ({
+            name: l.name,
+            type: l.type,
+            dist: Math.round(GeoMath.pointToLineDistance(pt.coord, l.points) * 10) / 10
+          })).sort((a, b) => a.dist - b.dist);
+
+          const nearestLineInfo = nearestLines[0] ? `距【${nearestLines[0].name}】约 ${nearestLines[0].dist} ${u}` : '';
+          const areaInfo = inAreas.length > 0 ? `地处【${inAreas.join('、')}】内` : '地处开阔缓冲带';
+
+          md += `- **【${pt.name}】**（${pt.coord[0]} ${u}, ${pt.coord[1]} ${u}）[${pt.type} | 势力: ${pt.faction || '未定'}]\n`;
+          md += `  - 区域归属: ${areaInfo} | 交通与水源: ${nearestLineInfo}\n`;
+          md += `  - 邻近据点: ${neighbors.map(n => `向${n.dir} ${n.dist} ${u} 为【${n.name}】`).join('；')}\n`;
+          md += `  - 设定背景: ${pt.desc}\n\n`;
+        });
+
+        // 2. 线条分布及沿途聚落
+        md += `### 〰️ 关键山川、河流与商道路线分析（共 ${mapData.lines.length} 条）：\n`;
+        mapData.lines.forEach(l => {
+          // 查找该线周围辐射内的所有聚落点 (按尺度阈值判断)
+          const threshold = u === 'li' ? 50.0 : u === 'au' || u === 'ly' ? 2.0 : 25.0;
+          const nearbyPts = mapData.points
+            .map(pt => ({ name: pt.name, dist: Math.round(GeoMath.pointToLineDistance(pt.coord, l.points) * 10) / 10 }))
+            .filter(item => item.dist <= threshold)
+            .sort((a, b) => a.dist - b.dist);
+
+          const startPt = l.points[0];
+          const endPt = l.points[l.points.length - 1];
+          const overallDir = GeoMath.bearingText(startPt, endPt);
+
+          md += `- **【${l.name}】**（类别: ${l.type}，总体走向: 从 (${startPt[0]},${startPt[1]}) 奔向【${overallDir}】方向 (${endPt[0]},${endPt[1]}))\n`;
+          md += `  - 折线关键控制点集: ${l.points.map(p => `(${p[0]}, ${p[1]})`).join(' -> ')}\n`;
+          md += `  - 辐射聚落 (${threshold}${u} 内): ${nearbyPts.length > 0 ? nearbyPts.map(p => `【${p.name}】(距此约 ${p.dist} ${u})`).join('、') : '沿途为无人荒野天堑'}\n`;
+          md += `  - 战略设定: ${l.desc}\n\n`;
+        });
+
+        // 3. 面状区域分布
+        md += `### 🌐 大地貌与自然环境面域（共 ${mapData.areas.length} 个）：\n`;
+        mapData.areas.forEach(a => {
+          const insidePts = mapData.points.filter(pt => GeoMath.isPointInArea(pt.coord, a.circles)).map(p => p.name);
+          md += `- **【${a.name}】**（类别: ${a.type}，拟合圆中心群: ${a.circles.map(c => `心(${c.center[0]},${c.center[1]}) 径${c.radius}${u}`).join('，')}）\n`;
+          md += `  - 域内城池据点: ${insidePts.length > 0 ? insidePts.map(n => `【${n}】`).join('、') : '无常驻定居城邦（极端生态/秘境）'}\n`;
+          md += `  - 地貌生态描述: ${a.desc}\n\n`;
+        });
+
+        return md;
+      }
+    };
+
+    // ==========================================
+    // 4. 标准 System Prompt（供大模型直接产出本格式数据）
+    // ==========================================
+    const SYSTEM_PROMPT_TEMPLATE = `你是一位严谨的世界观构筑师与小说地理测量家。
+请根据用户的世界观设定或小说故事需求，严格按照【笛卡尔平面直角坐标系 (km)】生成一套可直接在数字化画板上渲染的世界地图数据集。
+
+【坐标系标准】：
+- 以原点 (0, 0) 为大陆地理或权力中心。
+- X 轴：向东为正 (+km)，向西为负 (-km)。
+- Y 轴：向北为正 (+km)，向南为负 (-km)。
+- 尺度建议：整块核心大陆跨度建议在 100km ~ 400km 之间，保证合理的人类骑行/行军距离（一日行军约 25~40 km）。
+
+【输出格式要求】：
+必须输出且仅输出一个合法的 JSON 代码块（\`\`\`json ... \`\`\`），字段结构如下：
+{
+  "meta": {
+    "worldName": "世界/大陆名称",
+    "coordUnit": "km",
+    "description": "世界观地理概括"
+  },
+  "points": [
+    {
+      "id": "point_1",
+      "name": "地名（如：王都·白石城）",
+      "type": "city | town | village | fort | landmark | ruin",
+      "coord": [12.5, 30.0],
+      "desc": "该地点的简述、风土人情与在小说剧情中的战略意义",
+      "faction": "所属势力"
+    }
+  ],
+  "lines": [
+    {
+      "id": "line_1",
+      "name": "线条名称（如：天河 / 龙脊山脉 / 帝国北巡道）",
+      "type": "river | mountain | road | border",
+      "points": [[-50.0, 80.0], [-10.0, 40.0], [20.0, 10.0]],
+      "desc": "线条的大致分布、走向与地理分割效果"
+    }
+  ],
+  "areas": [
+    {
+      "id": "area_1",
+      "name": "面域名称（如：极北雪原 / 翡翠大平原 / 赤炎沙漠 / 苍蓝海）",
+      "type": "plain | desert | snowfield | forest | lake | sea | territory",
+      "circles": [
+        { "center": [60.0, -80.0], "radius": 40.0 },
+        { "center": [90.0, -60.0], "radius": 30.0 }
+      ],
+      "desc": "生态特征、气候与危险度"
+    }
+  ]
+}
+注意：线条无需超高精度，给出 3~8 个体现蜿蜒和大致走向的关键控制点即可；面域采用 1~3 个不同大小的圆组合包络模拟即可。`;
+
+    // ==========================================
+    // 5. 主应用组件 (NovelMapStudio)
+    // ==========================================
+    function NovelMapStudio() {
+      // 地图核心数据状态
+      const [mapData, setMapData] = useState(DEFAULT_MAP_DATA);
+      
+      // PS 图层可视状态 (图层隐藏/显示)
+      const [layerVisibility, setLayerVisibility] = useState({
+        layer_territory: true,
+        layer_terrain: true,
+        layer_waters: true,
+        layer_mountains: true,
+        layer_roads: true,
+        layer_settlements: true,
+        layer_landmarks: true
+      });
+
+      // 画布变换：缩放与平移 (屏幕坐标 -> 世界坐标)
+      // 世界坐标 (0, 0) 默认居中显示于画布中心
+      const [viewTransform, setViewTransform] = useState({
+        x: 0, // 画布平移偏移 (px)
+        y: 0,
+        scale: 4.0 // 1 km 对应的屏幕像素数 (默认 1km = 4px，可放大缩小)
+      });
+      const [isPanning, setIsPanning] = useState(false);
+      const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+      // 当前交互模式 / 选中的要素
+      const [selectedElement, setSelectedElement] = useState(null); // { category: 'point'|'line'|'area', id: '...' }
+      const [activeTool, setActiveTool] = useState('select'); // 'select' | 'add_point' | 'add_line' | 'add_circle'
+      const [drawingLine, setDrawingLine] = useState(null); // 正在绘制的折线控制点
+      const [dragTarget, setDragTarget] = useState(null); // { type: 'point'|'circle_center'|'line_vertex', ... }
+
+      // 侧边栏/抽屉切换
+      const [activeTab, setActiveTab] = useState('layers'); // 'layers' | 'ai_chat' | 'data'
+      const [jsonCodeInput, setJsonCodeInput] = useState('');
+      const [dataSubTab, setDataSubTab] = useState('report'); // 'report' | 'code' | 'prompt'
+      const [copiedTip, setCopiedTip] = useState(false);
+      const [isSaveMenuOpen, setIsSaveMenuOpen] = useState(false);
+      const fileInputRef = useRef(null);
+
+      // 初始化读取本地缓存存档
+      useEffect(() => {
+        try {
+          const autoSaved = localStorage.getItem('novelmap_autosave');
+          if (autoSaved) {
+            const parsed = JSON.parse(autoSaved);
+            if (parsed && parsed.points && parsed.lines && parsed.areas) {
+              setMapData(parsed);
+            }
+          }
+        } catch(e) {}
+      }, []);
+
+      // 数据变动自动静默保存至 LocalStorage
+      useEffect(() => {
+        try {
+          localStorage.setItem('novelmap_autosave', JSON.stringify(mapData));
+        } catch(e) {}
+      }, [mapData]);
+
+      // 保存至浏览器本地存储
+      const handleSaveToBrowser = () => {
+        try {
+          localStorage.setItem('novelmap_manual_save', JSON.stringify(mapData));
+          alert('💾 成功将【' + mapData.meta.worldName + '】保存到浏览器本地卷宗！');
+          setIsSaveMenuOpen(false);
+        } catch(e) {
+          alert('❌ 保存失败：' + e.message);
+        }
+      };
+
+      // 从浏览器本地存储读取
+      const handleLoadFromBrowser = () => {
+        try {
+          const saved = localStorage.getItem('novelmap_manual_save') || localStorage.getItem('novelmap_autosave');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setMapData(parsed);
+            alert('📂 成功读取存档【' + parsed.meta.worldName + '】！');
+            setIsSaveMenuOpen(false);
+          } else {
+            alert('⚠️ 未找到已保存的浏览器本地存档。');
+          }
+        } catch(e) {
+          alert('❌ 读取失败：' + e.message);
+        }
+      };
+
+      // 导出地图为独立 .novelmap.json 实体文件
+      const handleExportFile = () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(mapData, null, 2));
+        const downloadAnchor = document.createElement('a');
+        const filename = `${mapData.meta.worldName || '世界地图'}_${mapData.meta.coordUnit || 'km'}.novelmap.json`;
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", filename);
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        setIsSaveMenuOpen(false);
+      };
+
+      // 从电脑本地导入 .json 实体文件
+      const handleImportFile = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const parsed = JSON.parse(event.target.result);
+            if (parsed && parsed.points && parsed.lines && parsed.areas) {
+              setMapData(parsed);
+              alert('✅ 成功载入地图文件【' + (parsed.meta.worldName || file.name) + '】！');
+              setIsSaveMenuOpen(false);
+            } else {
+              alert('❌ 文件格式不符合 NWM-CP 坐标地图规范（缺少 points/lines/areas）。');
+            }
+          } catch(err) {
+            alert('❌ 解析地图文件失败：' + err.message);
+          }
+        };
+        reader.readAsText(file);
+        // 清空 input 保证同名文件可再次触发
+        e.target.value = '';
+      };
+
+      // AI 直连 API 配置状态
+      const [aiConfig, setAiConfig] = useState(() => {
+        try {
+          const s = localStorage.getItem('novelmap_ai_config');
+          return s ? JSON.parse(s) : {
+            apiUrl: 'https://api.openai.com/v1',
+            apiKey: '',
+            model: 'gpt-4o',
+            temperature: 0.7
+          };
+        } catch(e) {
+          return { apiUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o', temperature: 0.7 };
+        }
+      });
+      const [aiLoading, setAiLoading] = useState(false);
+      const [aiProgress, setAiProgress] = useState(0); // 0 ~ 100
+      const [aiStatusText, setAiStatusText] = useState('');
+      const [aiPromptInput, setAiPromptInput] = useState('');
+      const [aiChatHistory, setAiChatHistory] = useState([
+        { id: 1, role: 'assistant', content: '您好！我是小说世界观与地图空间架构 AI。您可以直接输入故事背景要求（如：“生成一个由三座险要要塞守卫的雪原与峡谷裂隙世界”），我将严格按照坐标规范为您构建全套点、线、面地图，并一键导入画板！' }
+      ]);
+      const [isAiConfigOpen, setIsAiConfigOpen] = useState(false);
+      const [fetchedModels, setFetchedModels] = useState([]);
+      const [fetchingModels, setFetchingModels] = useState(false);
+      const [fetchModelsError, setFetchModelsError] = useState('');
+
+      // 动态读取指定 API 端点的可用模型列表 (/v1/models)
+      const fetchAvailableModels = async (apiUrl, apiKey) => {
+        const urlToUse = apiUrl || aiConfig.apiUrl;
+        const keyToUse = apiKey || aiConfig.apiKey;
+        if (!urlToUse || !keyToUse) {
+          setFetchModelsError('请先填入有效的 API Base URL 与 API Key');
+          return;
+        }
+        setFetchingModels(true);
+        setFetchModelsError('');
+        try {
+          const cleanUrl = urlToUse.replace(/\/+$/, '');
+          // 兼容末尾带不带 /v1 的常见配置
+          const endpoint = cleanUrl.endsWith('/models') ? cleanUrl : `${cleanUrl}/models`;
+          const res = await fetch(endpoint, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${keyToUse}`
+            }
+          });
+          if (!res.ok) {
+            const errBody = await res.text();
+            throw new Error(`获取模型失败 [${res.status}]: ${errBody.slice(0, 150)}`);
+          }
+          const data = await res.json();
+          let list = [];
+          if (Array.isArray(data.data)) {
+            list = data.data.map(m => m.id || m.name).filter(Boolean);
+          } else if (Array.isArray(data.models)) {
+            list = data.models.map(m => m.id || m.name).filter(Boolean);
+          } else if (Array.isArray(data)) {
+            list = data.map(m => typeof m === 'string' ? m : (m.id || m.name)).filter(Boolean);
+          }
+          // 排序
+          list.sort();
+          setFetchedModels(list);
+          if (list.length > 0) {
+            // 如果当前填的模型不在列表中，自动选中第一个推荐模型或匹配常用项
+            if (!list.includes(aiConfig.model)) {
+              const preferred = list.find(m => m.includes('chat') || m.includes('gpt') || m.includes('deepseek') || m.includes('qwen')) || list[0];
+              setAiConfig(prev => ({ ...prev, model: preferred }));
+            }
+          } else {
+            setFetchModelsError('服务已响应但模型列表为空');
+          }
+        } catch(err) {
+          // 如果是浏览器同源策略限制 (CORS TypeError: Failed to fetch)
+          if (err.message && err.message.includes('Failed to fetch') && (urlToUse.includes('flos-api') || urlToUse.includes('api.openai.com') || urlToUse.includes('localhost') === false)) {
+            // 自动降级预置列表并提示
+            if (urlToUse.includes('flos-api')) {
+              const flosModels = [
+                'gemini-3.8-flash-high',
+                'claude-opus-4-6-thinking',
+                'gemini-3.7-flash-high',
+                'gemini-3-flash',
+                'gemini-3.1-flash-image',
+                'gemini-pro-agent',
+                'gpt-oss-120b-medium',
+                'claude-sonnet-4-6',
+                'gemini-3.6-flash-high',
+                'gemini-3.1-pro-low',
+                'gemini-3.1-flash-lite'
+              ];
+              setFetchedModels(flosModels);
+              if (!flosModels.includes(aiConfig.model)) {
+                setAiConfig(prev => ({ ...prev, model: flosModels[0] }));
+              }
+              setFetchModelsError('提示：因该 API 未在响应头配置跨域开放 (CORS)，系统已自动为您载入并匹配该接口的 11 款精选模型列表！如在浏览器直接调用受阻，可启动本地中转代理。');
+              return;
+            }
+          }
+          setFetchModelsError(err.message + ' (若为跨域拦截，可通过启动本地中转代理访问)');
+        } finally {
+          setFetchingModels(false);
+        }
+      };
+
+      const canvasRef = useRef(null);
+
+      // 同步当前 JSON 数据到代码编辑器
+      useEffect(() => {
+        setJsonCodeInput(JSON.stringify(mapData, null, 2));
+      }, [mapData]);
+
+      // 初始化画布居中
+      useEffect(() => {
+        if (canvasRef.current) {
+          const rect = canvasRef.current.getBoundingClientRect();
+          setViewTransform(prev => ({
+            ...prev,
+            x: rect.width / 2,
+            y: rect.height / 2
+          }));
+        }
+      }, []);
+
+      // 坐标转换工具函数
+      // 世界坐标 [kmX, kmY] -> 屏幕像素 [pxX, pxY]
+      const worldToScreen = (coord) => {
+        const pxX = viewTransform.x + coord[0] * viewTransform.scale;
+        const pxY = viewTransform.y - coord[1] * viewTransform.scale; // 数学Y向上为正，屏幕Y向下为正
+        return [pxX, pxY];
+      };
+
+      // 屏幕像素 [pxX, pxY] -> 世界坐标 [kmX, kmY] (保留1位小数)
+      const screenToWorld = (pxX, pxY) => {
+        const kmX = (pxX - viewTransform.x) / viewTransform.scale;
+        const kmY = (viewTransform.y - pxY) / viewTransform.scale;
+        return [Math.round(kmX * 10) / 10, Math.round(kmY * 10) / 10];
+      };
+
+      // 视角平滑飞行跳转聚焦至指定世界坐标 [kmX, kmY]
+      const jumpToCoord = (coord) => {
+        if (!canvasRef.current || !coord) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        // 计算使该坐标置于画布几何中心的 transform.x 和 transform.y
+        // pxX = x + kmX * scale => 当 pxX = rect.width / 2 时, x = rect.width / 2 - kmX * scale
+        // pxY = y - kmY * scale => 当 pxY = rect.height / 2 时, y = rect.height / 2 + kmY * scale
+        const targetX = rect.width / 2 - coord[0] * viewTransform.scale;
+        const targetY = rect.height / 2 + coord[1] * viewTransform.scale;
+
+        setViewTransform(prev => ({
+          ...prev,
+          x: targetX,
+          y: targetY
+        }));
+      };
+
+      // 图层切换
+      const toggleLayer = (layerId) => {
+        setLayerVisibility(prev => ({ ...prev, [layerId]: !prev[layerId] }));
+      };
+
+      // 鼠标缩放
+      const handleWheel = (e) => {
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+        const newScale = Math.max(1.0, Math.min(25.0, viewTransform.scale * zoomFactor));
+
+        const rect = canvasRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // 以鼠标为中心缩放
+        const newX = mouseX - (mouseX - viewTransform.x) * (newScale / viewTransform.scale);
+        const newY = mouseY - (mouseY - viewTransform.y) * (newScale / viewTransform.scale);
+
+        setViewTransform({ x: newX, y: newY, scale: newScale });
+      };
+
+      // 画布拖拽平移 & 要素拖拽移动
+      const handlePointerDown = (e) => {
+        if (e.button === 1 || (e.button === 0 && e.altKey)) {
+          // 中键或按住Alt左键平移画布
+          setIsPanning(true);
+          setPanStart({ x: e.clientX - viewTransform.x, y: e.clientY - viewTransform.y });
+          return;
+        }
+
+        const rect = canvasRef.current.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        const [worldX, worldY] = screenToWorld(clickX, clickY);
+
+        // 如果处于“添加点”工具模式
+        if (activeTool === 'add_point') {
+          const newId = 'pt_' + Date.now();
+          const newPt = {
+            id: newId,
+            name: '新聚落点位',
+            type: 'town',
+            coord: [worldX, worldY],
+            desc: '用户手动新建的小说据点，等待补充背景。',
+            faction: '自定义势力'
+          };
+          setMapData(prev => ({ ...prev, points: [...prev.points, newPt] }));
+          setSelectedElement({ category: 'point', id: newId });
+          setActiveTool('select');
+          return;
+        }
+
+        // 如果处于“绘制折线”工具模式
+        if (activeTool === 'add_line') {
+          if (!drawingLine) {
+            setDrawingLine([[worldX, worldY]]);
+          } else {
+            setDrawingLine([...drawingLine, [worldX, worldY]]);
+          }
+          return;
+        }
+
+        // 如果处于“添加面域”工具模式 (拟合圆)
+        if (activeTool === 'add_area') {
+          const newId = 'area_' + Date.now();
+          const defaultR = mapData.meta.coordUnit === 'li' ? 50 : mapData.meta.coordUnit === 'au' || mapData.meta.coordUnit === 'ly' ? 2 : 25;
+          const newArea = {
+            id: newId,
+            name: '新自然地貌/区域',
+            type: 'plain',
+            circles: [
+              { center: [worldX, worldY], radius: defaultR }
+            ],
+            desc: '用户手工创建的面状地理生态区域。'
+          };
+          setMapData(prev => ({ ...prev, areas: [...prev.areas, newArea] }));
+          setSelectedElement({ category: 'area', id: newId });
+          setActiveTool('select');
+          return;
+        }
+
+        // 默认点击空白取消选择
+        setSelectedElement(null);
+      };
+
+      const handlePointerMove = (e) => {
+        if (isPanning) {
+          setViewTransform(prev => ({
+            ...prev,
+            x: e.clientX - panStart.x,
+            y: e.clientY - panStart.y
+          }));
+          return;
+        }
+
+        // 正在拖拽某点位或控制点
+        if (dragTarget) {
+          const rect = canvasRef.current.getBoundingClientRect();
+          const [worldX, worldY] = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+          if (dragTarget.category === 'point') {
+            setMapData(prev => ({
+              ...prev,
+              points: prev.points.map(pt => pt.id === dragTarget.id ? { ...pt, coord: [worldX, worldY] } : pt)
+            }));
+          } else if (dragTarget.category === 'line_vertex') {
+            setMapData(prev => ({
+              ...prev,
+              lines: prev.lines.map(l => {
+                if (l.id !== dragTarget.lineId) return l;
+                const newPts = [...l.points];
+                newPts[dragTarget.vertexIndex] = [worldX, worldY];
+                return { ...l, points: newPts };
+              })
+            }));
+          } else if (dragTarget.category === 'area_circle') {
+            // 平移拟合圆圆心
+            setMapData(prev => ({
+              ...prev,
+              areas: prev.areas.map(a => {
+                if (a.id !== dragTarget.areaId) return a;
+                const newCircles = [...a.circles];
+                newCircles[dragTarget.circleIndex] = { ...newCircles[dragTarget.circleIndex], center: [worldX, worldY] };
+                return { ...a, circles: newCircles };
+              })
+            }));
+          } else if (dragTarget.category === 'area_circle_radius') {
+            // 交互拖拽圆边缘手柄：动态实时修改拟合圆半径 (km)
+            const targetArea = mapData.areas.find(a => a.id === dragTarget.areaId);
+            if (targetArea && targetArea.circles[dragTarget.circleIndex]) {
+              const cCenter = targetArea.circles[dragTarget.circleIndex].center;
+              const newR = Math.max(2.0, Math.round(GeoMath.distance(cCenter, [worldX, worldY]) * 10) / 10);
+              setMapData(prev => ({
+                ...prev,
+                areas: prev.areas.map(a => {
+                  if (a.id !== dragTarget.areaId) return a;
+                  const newCircles = [...a.circles];
+                  newCircles[dragTarget.circleIndex] = { ...newCircles[dragTarget.circleIndex], radius: newR };
+                  return { ...a, circles: newCircles };
+                })
+              }));
+            }
+          }
+        }
+      };
+
+      const handlePointerUp = () => {
+        setIsPanning(false);
+        setDragTarget(null);
+      };
+
+      // 结束当前线条绘制
+      const finishDrawingLine = (lineType = 'river') => {
+        if (!drawingLine || drawingLine.length < 2) {
+          setDrawingLine(null);
+          return;
+        }
+        const newId = 'line_' + Date.now();
+        const newLine = {
+          id: newId,
+          name: lineType === 'river' ? '新支流' : lineType === 'mountain' ? '新山脊' : '新建干道',
+          type: lineType,
+          points: drawingLine,
+          desc: '用户在坐标系上手工绘制的关键走势线条。'
+        };
+        setMapData(prev => ({ ...prev, lines: [...prev.lines, newLine] }));
+        setSelectedElement({ category: 'line', id: newId });
+        setDrawingLine(null);
+        setActiveTool('select');
+      };
+
+      // 解析导入外部 JSON
+      const applyJsonCode = () => {
+        try {
+          const parsed = JSON.parse(jsonCodeInput);
+          if (!parsed.points || !parsed.lines || !parsed.areas) {
+            throw new Error('缺少必要的大纲键：points / lines / areas');
+          }
+          setMapData(parsed);
+          alert('✅ 成功编译并载入新世界坐标地图！所有图层与点线已精准复原。');
+        } catch (err) {
+          alert('❌ JSON 解析错误，请检查语法格式：' + err.message);
+        }
+      };
+
+      // 保存 AI API 配置
+      const saveAiConfig = (cfg) => {
+        setAiConfig(cfg);
+        try {
+          localStorage.setItem('novelmap_ai_config', JSON.stringify(cfg));
+          alert('✅ AI 接口配置已保存！');
+        } catch(e) {}
+      };
+
+      // 从 AI 回复文本中提取合法的 JSON 代码块
+      const extractJsonFromAiReply = (text) => {
+        const jsonMatch = text.match(/```json([\s\S]*?)```/) || text.match(/```([\s\S]*?)```/);
+        if (jsonMatch) return jsonMatch[1].trim();
+        // 尝试直接探测首个 { 到最后一个 }
+        const firstBrace = text.indexOf('{');
+        const lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          return text.slice(firstBrace, lastBrace + 1).trim();
+        }
+        return null;
+      };
+
+      // 调用直连 AI 模型生成世界观与地图坐标
+      const handleAiGenerate = async (customPrompt) => {
+        const userPrompt = customPrompt || aiPromptInput.trim();
+        if (!userPrompt) return;
+
+        if (!aiConfig.apiKey) {
+          setIsAiConfigOpen(true);
+          alert('⚠️ 请先配置你的大模型 API Key（兼容 OpenAI 规范，如 DeepSeek、Kimi、通义千问、GPT-4o 等）！');
+          return;
+        }
+
+        setAiLoading(true);
+        setAiProgress(10);
+        setAiStatusText('正在连接大语言模型...');
+        const newMsgId = Date.now();
+        setAiChatHistory(prev => [...prev, { id: newMsgId, role: 'user', content: userPrompt }]);
+        setAiPromptInput('');
+
+        // 模拟自然阶段进度推进计时器
+        const progressTimer = setInterval(() => {
+          setAiProgress(p => {
+            if (p < 35) {
+              setAiStatusText('推演大陆板块构造与山川水系走向...');
+              return p + 6;
+            } else if (p < 70) {
+              setAiStatusText('标定城邦坐标、行军路线与地理阻隔...');
+              return p + 4;
+            } else if (p < 92) {
+              setAiStatusText('撰写风土人文描述并校验坐标数据...');
+              return p + 1.5;
+            }
+            return p;
+          });
+        }, 400);
+
+        try {
+          const cleanUrl = aiConfig.apiUrl.replace(/\/+$/, '');
+          const endpoint = cleanUrl.endsWith('/chat/completions') ? cleanUrl : `${cleanUrl}/chat/completions`;
+
+          const unit = mapData.meta.coordUnit || 'km';
+          const fullSystemPrompt = `${SYSTEM_PROMPT_TEMPLATE}\n\n【重要：当前用户设定的空间坐标单位为：${unit}】。请输出严格符合该尺度的坐标数值。`;
+
+          let res;
+          try {
+            res = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${aiConfig.apiKey}`
+              },
+              body: JSON.stringify({
+                model: aiConfig.model || 'gpt-4o',
+                messages: [
+                  { role: 'system', content: fullSystemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                temperature: aiConfig.temperature !== undefined ? aiConfig.temperature : 0.7
+              })
+            });
+          } catch(fetchErr) {
+            // 如果前端 fetch 遭遇浏览器跨域拦截 (Failed to fetch)
+            if (fetchErr.message && fetchErr.message.includes('Failed to fetch')) {
+              // 尝试探测是否启动了本地代理 http://127.0.0.1:3000
+              try {
+                const proxyRes = await fetch('http://127.0.0.1:3000/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${aiConfig.apiKey}`,
+                    'x-target-base': cleanUrl
+                  },
+                  body: JSON.stringify({
+                    model: aiConfig.model || 'gpt-4o',
+                    messages: [
+                      { role: 'system', content: fullSystemPrompt },
+                      { role: 'user', content: userPrompt }
+                    ],
+                    temperature: aiConfig.temperature !== undefined ? aiConfig.temperature : 0.7
+                  })
+                });
+                if (proxyRes.ok) {
+                  res = proxyRes;
+                }
+              } catch(proxyErr) {}
+            }
+            if (!res) {
+              throw new Error(`浏览器拦截跨域请求 (CORS)。请双击打开【启动本地代理(解决跨域).bat】即可完美畅通直连！原错误：${fetchErr.message}`);
+            }
+          }
+
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`API 报错 [${res.status}]: ${errText}`);
+          }
+
+          const data = await res.json();
+          const replyText = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : '(AI 未返回内容)';
+
+          // 自动检测回复中是否含有可执行的地图 JSON
+          const extractedJson = extractJsonFromAiReply(replyText);
+          let parsedMap = null;
+          if (extractedJson) {
+            try {
+              parsedMap = JSON.parse(extractedJson);
+              // 极简闭环：如果成功解析到了地图数据，自动直接应用到画板，无需用户再手动寻找点击
+              setMapData(parsedMap);
+            } catch(e) {}
+          }
+
+          setAiProgress(100);
+          setAiStatusText('地图构建完成，正在铺设到画板！');
+          setAiChatHistory(prev => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              role: 'assistant',
+              content: replyText,
+              extractedMap: parsedMap
+            }
+          ]);
+        } catch(err) {
+          setAiChatHistory(prev => [
+            ...prev,
+            { id: Date.now() + 1, role: 'assistant', content: `❌ 请求失败: ${err.message}` }
+          ]);
+        } finally {
+          clearInterval(progressTimer);
+          setTimeout(() => {
+            setAiLoading(false);
+            setAiProgress(0);
+            setAiStatusText('');
+          }, 800);
+        }
+      };
+
+      // 复制 AI 标准 System Prompt
+      const copySystemPrompt = () => {
+        navigator.clipboard.writeText(SYSTEM_PROMPT_TEMPLATE);
+        setCopiedTip(true);
+        setTimeout(() => setCopiedTip(false), 2000);
+      };
+
+      // 获取当前正在选中的要素详细信息
+      const currentSelectedData = useMemo(() => {
+        if (!selectedElement) return null;
+        if (selectedElement.category === 'point') {
+          return { item: mapData.points.find(p => p.id === selectedElement.id), category: 'point' };
+        }
+        if (selectedElement.category === 'line') {
+          return { item: mapData.lines.find(l => l.id === selectedElement.id), category: 'line' };
+        }
+        if (selectedElement.category === 'area') {
+          return { item: mapData.areas.find(a => a.id === selectedElement.id), category: 'area' };
+        }
+        return null;
+      }, [selectedElement, mapData]);
+
+      // 生成纯文本空间分析报告
+      const spatialReport = useMemo(() => {
+        return GeoMath.generateSpatialAnalysisReport(mapData);
+      }, [mapData]);
+
+      return (
+        <div className="flex h-screen w-screen overflow-hidden bg-[#0f1117]">
+          {/* ==================================================== */}
+          {/* 1. 左侧快捷工具栏 (PS 风格) */}
+          {/* ==================================================== */}
+          <div className="w-18 bg-[#141721] border-r border-[#232736] flex flex-col items-center py-4 gap-4 z-20 flex-shrink-0 px-2">
+            <div className="w-11 h-11 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-base border border-amber-500/40 shadow-lg font-serif" title="NovelMap Studio">
+              NM
+            </div>
+            <div className="w-10 h-[1px] bg-slate-800 my-1"></div>
+
+            <button
+              onClick={() => { setActiveTool('select'); setDrawingLine(null); }}
+              className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition ${activeTool === 'select' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+              title="选择 / 拖拽微调 (V)"
+            >
+              <span className="text-lg leading-none">↖</span>
+              <span className="text-xs font-bold font-serif">选择</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTool('add_point'); setDrawingLine(null); }}
+              className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition ${activeTool === 'add_point' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+              title="打点：添加据点/城邦/村落"
+            >
+              <span className="text-lg leading-none">📍</span>
+              <span className="text-xs font-bold font-serif">+点位</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTool('add_line'); setDrawingLine([]); }}
+              className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition ${activeTool === 'add_line' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+              title="线条：绘制河流/山脉/商道折线"
+            >
+              <span className="text-lg leading-none">〰️</span>
+              <span className="text-xs font-bold font-serif">+线条</span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTool('add_area'); setDrawingLine(null); }}
+              className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 transition ${activeTool === 'add_area' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+              title="面域：添加湖泊/雪原/荒漠/疆域 (拟合圆)"
+            >
+              <span className="text-lg leading-none">🌐</span>
+              <span className="text-xs font-bold font-serif">+面域</span>
+            </button>
+
+            <div className="w-10 h-[1px] bg-slate-800 my-1"></div>
+
+            {/* 缩放重置与中心对齐 */}
+            <button
+              onClick={() => {
+                if (canvasRef.current) {
+                  const rect = canvasRef.current.getBoundingClientRect();
+                  setViewTransform({ x: rect.width / 2, y: rect.height / 2, scale: 4.0 });
+                }
+              }}
+              className="w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 text-slate-300 hover:bg-slate-800 hover:text-white transition"
+              title="复位到原点 (0, 0)"
+            >
+              <span className="text-lg leading-none">🎯</span>
+              <span className="text-xs font-bold font-serif">居中</span>
+            </button>
+          </div>
+
+          {/* ==================================================== */}
+          {/* 2. 中间可视化 PS 画板区域 */}
+          {/* ==================================================== */}
+          <div className="flex-1 flex flex-col h-full relative overflow-hidden bg-[#161922]">
+            {/* 顶部简易坐标指示与快捷状态条 */}
+            <div className="h-14 bg-[#141721] border-b border-[#232736] flex items-center justify-between px-5 text-base text-slate-200 z-10">
+              <div className="flex items-center gap-5">
+                <span className="font-bold text-amber-200 flex items-center gap-2 font-serif text-lg tracking-wide">
+                  🗺️ {mapData.meta.worldName}
+                </span>
+
+                {/* 比例尺单位切换器 */}
+                <div className="flex items-center bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 shadow-sm">
+                  <span className="text-sm text-slate-300 mr-2 font-serif font-bold">空间尺度:</span>
+                  <select
+                    value={mapData.meta.coordUnit || 'km'}
+                    onChange={(e) => {
+                      const newUnit = e.target.value;
+                      const preset = UNIT_PRESETS[newUnit] || UNIT_PRESETS.km;
+                      setMapData(prev => ({
+                        ...prev,
+                        meta: { ...prev.meta, coordUnit: newUnit, gridStep: preset.step }
+                      }));
+                      // 适配适中缩放
+                      setViewTransform(prev => ({ ...prev, scale: preset.defaultScale }));
+                    }}
+                    className="bg-transparent text-amber-300 font-bold text-sm focus:outline-none cursor-pointer"
+                  >
+                    {Object.values(UNIT_PRESETS).map(u => (
+                      <option key={u.id} value={u.id} className="bg-slate-900 text-slate-100">{u.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <span className="text-sm bg-slate-800 px-3 py-1.5 rounded-lg text-amber-300 font-mono font-bold border border-slate-700/60 shadow-sm">
+                  1 {mapData.meta.coordUnit || 'km'} = {viewTransform.scale.toFixed(1)} px
+                </span>
+
+                {/* 存档与文件管理菜单 */}
+                <div className="relative">
+                  <button
+                    onClick={() => setIsSaveMenuOpen(!isSaveMenuOpen)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg text-xs font-serif font-bold border border-slate-700 shadow-sm transition"
+                    title="存档管理：保存、读取、导入或导出本地地图"
+                  >
+                    <span>💾</span>
+                    <span>档案</span>
+                    <span className="text-[10px] text-slate-400">▼</span>
+                  </button>
+
+                  {isSaveMenuOpen && (
+                    <div className="absolute top-full left-0 mt-1.5 w-48 bg-[#181b26] border border-amber-600/50 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 animate-in fade-in duration-150">
+                      <button
+                        onClick={handleSaveToBrowser}
+                        className="w-full text-left px-3 py-2 rounded text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-2 font-serif transition"
+                      >
+                        <span>💾</span> 保存至本地卷宗
+                      </button>
+                      <button
+                        onClick={handleLoadFromBrowser}
+                        className="w-full text-left px-3 py-2 rounded text-xs text-slate-200 hover:bg-slate-800 flex items-center gap-2 font-serif transition"
+                      >
+                        <span>📂</span> 读取本地卷宗
+                      </button>
+                      <div className="w-full h-[1px] bg-slate-800 my-1"></div>
+                      <button
+                        onClick={handleExportFile}
+                        className="w-full text-left px-3 py-2 rounded text-xs text-amber-300 hover:bg-slate-800 flex items-center gap-2 font-serif transition"
+                      >
+                        <span>📤</span> 导出为文件 (.json)
+                      </button>
+                      <button
+                        onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                        className="w-full text-left px-3 py-2 rounded text-xs text-amber-300 hover:bg-slate-800 flex items-center gap-2 font-serif transition"
+                      >
+                        <span>📥</span> 从电脑导入文件
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 隐藏的本地文件上传 input */}
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImportFile}
+                    accept=".json"
+                    className="hidden"
+                  />
+                </div>
+
+                {/* 顶部极速 AI 生成触发器 (支持进度条与动态阶段状态展示) */}
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      const prompt = window.prompt("✨ 极速 AI 世界生成：请输入你的小说地图需求 (如：一个包含三座险要要塞的雪原与大平原世界)", "生成一个含平原、沙漠、雪原与四座城邦的奇幻大陆");
+                      if (prompt && prompt.trim()) {
+                        setActiveTab('data');
+                        setDataSubTab('report');
+                        handleAiGenerate(prompt.trim());
+                      }
+                    }}
+                    disabled={aiLoading}
+                    className="relative overflow-hidden flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 disabled:opacity-90 text-white rounded-lg text-xs font-serif font-bold shadow-md border border-amber-500 transition min-w-[170px]"
+                    title="点击直接输入一句话需求，AI 自动生成并在画板上呈现地图"
+                  >
+                    {/* 动态进度条背景条 */}
+                    {aiLoading && (
+                      <div
+                        className="absolute inset-y-0 left-0 bg-amber-400/40 transition-all duration-300 pointer-events-none"
+                        style={{ width: `${aiProgress}%` }}
+                      ></div>
+                    )}
+                    <span className="text-sm relative z-10">{aiLoading ? '⏳' : '✨'}</span>
+                    <span className="relative z-10 tracking-wide">
+                      {aiLoading ? (
+                        <span className="flex items-center gap-1.5">
+                          <span>{aiStatusText || 'AI 计算中...'}</span>
+                          <span className="font-mono text-[11px] opacity-90">{Math.round(aiProgress)}%</span>
+                        </span>
+                      ) : (
+                        '一键 AI 生成新世界'
+                      )}
+                    </span>
+                  </button>
+                </div>
+                {drawingLine && (
+                  <span className="text-amber-400 flex items-center gap-2 animate-pulse font-mono text-sm bg-amber-950/60 px-3 py-1 rounded-lg border border-amber-800">
+                    ● 正在绘制线条（已记录 {drawingLine.length} 个点）：
+                    <button onClick={() => finishDrawingLine('river')} className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold">存为河流</button>
+                    <button onClick={() => finishDrawingLine('mountain')} className="px-2.5 py-1 bg-stone-600 hover:bg-stone-500 text-white rounded text-xs font-bold">存为山脉</button>
+                    <button onClick={() => finishDrawingLine('road')} className="px-2.5 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded text-xs font-bold">存为商道</button>
+                    <button onClick={() => setDrawingLine(null)} className="px-2.5 py-1 bg-red-700 hover:bg-red-600 text-white rounded text-xs font-bold">取消</button>
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-4 text-xs font-mono text-slate-400">
+                <span className="bg-slate-900/60 px-2 py-1 rounded border border-slate-800">💡 [Alt + 鼠标左键] 平移画布</span>
+                <span className="bg-slate-900/60 px-2 py-1 rounded border border-slate-800">🔍 [鼠标滚轮] 缩放视野</span>
+              </div>
+            </div>
+
+            {/* SVG 矢量渲染画板 */}
+            <div
+              ref={canvasRef}
+              onWheel={handleWheel}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              className={`flex-1 relative overflow-hidden ps-canvas-bg ${activeTool === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
+            >
+              <svg className="w-full h-full pointer-events-auto">
+                <defs>
+                  {/* 刻度背景细网格 (10km 网格) */}
+                  <pattern
+                    id="grid-10km"
+                    width={10 * viewTransform.scale}
+                    height={10 * viewTransform.scale}
+                    patternUnits="userSpaceOnUse"
+                    patternTransform={`translate(${viewTransform.x}, ${viewTransform.y})`}
+                  >
+                    <path
+                      d={`M ${10 * viewTransform.scale} 0 L 0 0 0 ${10 * viewTransform.scale}`}
+                      fill="none"
+                      stroke="rgba(255, 255, 255, 0.05)"
+                      strokeWidth="1"
+                    />
+                  </pattern>
+                  {/* 刻度背景主网格 (50km 网格) */}
+                  <pattern
+                    id="grid-50km"
+                    width={50 * viewTransform.scale}
+                    height={50 * viewTransform.scale}
+                    patternUnits="userSpaceOnUse"
+                    patternTransform={`translate(${viewTransform.x}, ${viewTransform.y})`}
+                  >
+                    <path
+                      d={`M ${50 * viewTransform.scale} 0 L 0 0 0 ${50 * viewTransform.scale}`}
+                      fill="none"
+                      stroke="rgba(245, 158, 11, 0.15)"
+                      strokeWidth="1.5"
+                    />
+                  </pattern>
+                </defs>
+
+                {/* 铺底网格 */}
+                <rect width="100%" height="100%" fill="url(#grid-10km)" />
+                <rect width="100%" height="100%" fill="url(#grid-50km)" />
+
+                {/* 笛卡尔坐标系 X/Y 轴主线 */}
+                <g className="pointer-events-none opacity-40">
+                  {/* X 轴 (东西向) */}
+                  <line
+                    x1="0"
+                    y1={viewTransform.y}
+                    x2="100%"
+                    y2={viewTransform.y}
+                    stroke="#f59e0b"
+                    strokeWidth="1.5"
+                    strokeDasharray="4,4"
+                  />
+                  {/* Y 轴 (南北向) */}
+                  <line
+                    x1={viewTransform.x}
+                    y1="0"
+                    x2={viewTransform.x}
+                    y2="100%"
+                    stroke="#f59e0b"
+                    strokeWidth="1.5"
+                    strokeDasharray="4,4"
+                  />
+                  {/* 原点 (0, 0) 标识 */}
+                  <circle cx={viewTransform.x} cy={viewTransform.y} r="5" fill="#f59e0b" />
+                  <text
+                    x={viewTransform.x + 10}
+                    y={viewTransform.y - 10}
+                    fill="#f59e0b"
+                    fontSize="13"
+                    fontWeight="bold"
+                    className="font-mono select-none"
+                    style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
+                  >
+                    原点 (0, 0) {mapData.meta.coordUnit || 'km'}
+                  </text>
+                </g>
+
+                {/* ------------------------------------------- */}
+                {/* [图层 1 & 2] 面状地貌与疆域 (多圆拟合渲染) */}
+                {/* ------------------------------------------- */}
+                {mapData.areas.map(area => {
+                  const style = TYPE_STYLES[area.type] || TYPE_STYLES.plain;
+                  const isLayerVisible = layerVisibility[style.layer];
+                  if (!isLayerVisible) return null;
+                  const isSelected = selectedElement?.category === 'area' && selectedElement?.id === area.id;
+
+                  return (
+                    <g key={area.id} className="transition-opacity">
+                      {area.circles.map((c, cIdx) => {
+                        const [cx, cy] = worldToScreen(c.center);
+                        const rPx = c.radius * viewTransform.scale;
+                        return (
+                          <g key={cIdx}>
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={rPx}
+                              fill={style.fill}
+                              fillOpacity={style.fillOpacity}
+                              stroke={style.stroke}
+                              strokeWidth={isSelected ? 3 : 1.5}
+                              strokeDasharray={isSelected ? '6,3' : ''}
+                              className="cursor-pointer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedElement({ category: 'area', id: area.id });
+                              }}
+                            />
+                            {/* 圆心控制把手 (当被选中时可拖拽平移该圆形) */}
+                            {isSelected && (
+                              <>
+                                <circle
+                                  cx={cx}
+                                  cy={cy}
+                                  r="5"
+                                  fill="#ffffff"
+                                  stroke="#f59e0b"
+                                  strokeWidth="2"
+                                  className="cursor-move"
+                                  title="拖拽平移该拟合圆圆心"
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragTarget({ category: 'area_circle', areaId: area.id, circleIndex: cIdx });
+                                  }}
+                                />
+                                {/* 圆周边缘半径控制把手 (可直接拖拽调整半径大小) */}
+                                <circle
+                                  cx={cx + rPx}
+                                  cy={cy}
+                                  r="14"
+                                  fill="transparent"
+                                  className="cursor-ew-resize"
+                                  onPointerDown={(e) => {
+                                    e.stopPropagation();
+                                    setDragTarget({ category: 'area_circle_radius', areaId: area.id, circleIndex: cIdx });
+                                  }}
+                                />
+                                <circle
+                                  cx={cx + rPx}
+                                  cy={cy}
+                                  r="6"
+                                  fill="#f59e0b"
+                                  stroke="#ffffff"
+                                  strokeWidth="2"
+                                  className="cursor-ew-resize pointer-events-none"
+                                  title={`拖拽修改半径 (当前: ${c.radius} ${mapData.meta.coordUnit || 'km'})`}
+                                />
+                                <line
+                                  x1={cx}
+                                  y1={cy}
+                                  x2={cx + rPx}
+                                  y2={cy}
+                                  stroke="#f59e0b"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="2,2"
+                                  className="pointer-events-none opacity-80"
+                                />
+                              </>
+                            )}
+                          </g>
+                        );
+                      })}
+                      {/* 面域名称标注 (位于首个圆的中心) */}
+                      {area.circles.length > 0 && (() => {
+                        const [cx, cy] = worldToScreen(area.circles[0].center);
+                        return (
+                          <text
+                            x={cx}
+                            y={cy}
+                            textAnchor="middle"
+                            dominantBaseline="central"
+                            fill={style.stroke}
+                            fontSize="16"
+                            fontWeight="900"
+                            className="pointer-events-none select-none font-serif tracking-widest"
+                            style={{
+                              textShadow: '0 0 6px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.8)',
+                              letterSpacing: '0.15em'
+                            }}
+                          >
+                            {area.name}
+                          </text>
+                        );
+                      })()}
+                    </g>
+                  );
+                })}
+
+                {/* ------------------------------------------- */}
+                {/* [图层 3 & 4 & 5] 折线要素 (河流、山脉、主干道路) */}
+                {/* ------------------------------------------- */}
+                {mapData.lines.map(line => {
+                  const style = TYPE_STYLES[line.type] || TYPE_STYLES.river;
+                  const isLayerVisible = layerVisibility[style.layer];
+                  if (!isLayerVisible) return null;
+                  const isSelected = selectedElement?.category === 'line' && selectedElement?.id === line.id;
+
+                  const ptsStr = line.points.map(pt => worldToScreen(pt).join(',')).join(' ');
+
+                  return (
+                    <g key={line.id}>
+                      {/* 背景高光描边 (选中时) */}
+                      {isSelected && (
+                        <polyline
+                          points={ptsStr}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth={style.strokeWidth + 6}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          opacity="0.4"
+                        />
+                      )}
+                      {/* 主线条 */}
+                      <polyline
+                        points={ptsStr}
+                        fill="none"
+                        stroke={style.color}
+                        strokeWidth={style.strokeWidth}
+                        strokeDasharray={style.dash}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="cursor-pointer hover:opacity-80"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedElement({ category: 'line', id: line.id });
+                        }}
+                      />
+                      {/* 顶点控制点 (选中时支持直接拖拽微调折线) */}
+                      {isSelected && line.points.map((pt, vIdx) => {
+                        const [vx, vy] = worldToScreen(pt);
+                        return (
+                          <circle
+                            key={vIdx}
+                            cx={vx}
+                            cy={vy}
+                            r="5"
+                            fill="#ffffff"
+                            stroke={style.color}
+                            strokeWidth="2"
+                            className="cursor-move"
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              setDragTarget({ category: 'line_vertex', lineId: line.id, vertexIndex: vIdx });
+                            }}
+                          />
+                        );
+                      })}
+                      {/* 线条文字标识 (置于中间关键点) */}
+                      {line.points.length >= 2 && (() => {
+                        const midIndex = Math.floor(line.points.length / 2);
+                        const [mx, my] = worldToScreen(line.points[midIndex]);
+                        return (
+                          <text
+                            x={mx}
+                            y={my - 10}
+                            textAnchor="middle"
+                            fill={style.color}
+                            fontSize="13"
+                            fontWeight="bold"
+                            className="pointer-events-none select-none font-serif tracking-wider"
+                            style={{
+                              textShadow: '0 2px 4px rgba(0,0,0,0.95), 0 0 8px rgba(0,0,0,0.85)',
+                              filter: 'drop-shadow(0 2px 2px rgba(0,0,0,0.8))'
+                            }}
+                          >
+                            {line.name}
+                          </text>
+                        );
+                      })()}
+                    </g>
+                  );
+                })}
+
+                {/* 正在手动绘制的临时折线预览 */}
+                {drawingLine && drawingLine.length > 0 && (
+                  <g className="pointer-events-none">
+                    <polyline
+                      points={drawingLine.map(pt => worldToScreen(pt).join(',')).join(' ')}
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="2.5"
+                      strokeDasharray="4,4"
+                    />
+                    {drawingLine.map((pt, idx) => {
+                      const [dx, dy] = worldToScreen(pt);
+                      return <circle key={idx} cx={dx} cy={dy} r="4" fill="#f59e0b" />;
+                    })}
+                  </g>
+                )}
+
+                {/* ------------------------------------------- */}
+                {/* [图层 6 & 7] 点状要素 (城市、城镇、关隘、奇观) */}
+                {/* ------------------------------------------- */}
+                {mapData.points.map(pt => {
+                  const style = TYPE_STYLES[pt.type] || TYPE_STYLES.city;
+                  const isLayerVisible = layerVisibility[style.layer];
+                  if (!isLayerVisible) return null;
+                  const isSelected = selectedElement?.category === 'point' && selectedElement?.id === pt.id;
+
+                  const [px, py] = worldToScreen(pt.coord);
+
+                  return (
+                    <g
+                      key={pt.id}
+                      className="cursor-pointer group"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedElement({ category: 'point', id: pt.id });
+                      }}
+                      onPointerDown={(e) => {
+                        if (activeTool === 'select') {
+                          e.stopPropagation();
+                          setSelectedElement({ category: 'point', id: pt.id });
+                          setDragTarget({ category: 'point', id: pt.id });
+                        }
+                      }}
+                    >
+                      {/* 隐形扩展响应区：半径 20px，保证鼠标极度平稳，彻底解决边缘抖动 */}
+                      <circle cx={px} cy={py} r="20" fill="transparent" />
+
+                      {/* 选中高亮光环 */}
+                      {isSelected && (
+                        <circle
+                          cx={px}
+                          cy={py}
+                          r={style.r + 8}
+                          fill="none"
+                          stroke="#f59e0b"
+                          strokeWidth="2"
+                          strokeDasharray="4,4"
+                          className="animate-spin pointer-events-none"
+                          style={{ transformOrigin: `${px}px ${py}px` }}
+                        />
+                      )}
+                      {/* 悬停光晕反馈 (取代scale抖动，视觉极度稳定) */}
+                      <circle
+                        cx={px}
+                        cy={py}
+                        r={style.r + 3}
+                        fill={style.color}
+                        className="opacity-0 group-hover:opacity-40 transition-opacity pointer-events-none"
+                      />
+                      {/* 核心据点实心圆 */}
+                      <circle
+                        cx={px}
+                        cy={py}
+                        r={style.r}
+                        fill={style.color}
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                        className="pointer-events-none"
+                        style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))' }}
+                      />
+                      {/* 文字与精确坐标角标 */}
+                      <text
+                        x={px}
+                        y={py + style.r + 17}
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="14"
+                        fontWeight="900"
+                        className="pointer-events-none select-none font-serif tracking-wider"
+                        style={{
+                          textShadow: '0 2px 4px #000000, 0 0 6px #000000, 0 0 2px #000000',
+                          letterSpacing: '0.05em'
+                        }}
+                      >
+                        {pt.name}
+                      </text>
+                      <text
+                        x={px}
+                        y={py + style.r + 32}
+                        textAnchor="middle"
+                        fill="#cbd5e1"
+                        fontSize="11"
+                        fontWeight="600"
+                        className="pointer-events-none select-none font-mono"
+                        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
+                      >
+                        ({pt.coord[0]}, {pt.coord[1]})
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+
+              {/* 画布悬浮 HUD：要素微调面板 (选中时直接在画布下方弹出) */}
+              {currentSelectedData && currentSelectedData.item && (
+                <div
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="absolute bottom-5 left-6 right-6 max-w-2xl mx-auto bg-[#181b26]/95 border border-amber-600/50 rounded-xl p-4 shadow-2xl backdrop-blur-md flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200 z-30 pointer-events-auto"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-700/60 pb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-lg">
+                        {currentSelectedData.category === 'point' ? '📍' : currentSelectedData.category === 'line' ? '〰️' : '🌐'}
+                      </span>
+                      <input
+                        type="text"
+                        value={currentSelectedData.item.name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (currentSelectedData.category === 'point') {
+                            setMapData(prev => ({ ...prev, points: prev.points.map(p => p.id === currentSelectedData.item.id ? { ...p, name: val } : p) }));
+                          } else if (currentSelectedData.category === 'line') {
+                            setMapData(prev => ({ ...prev, lines: prev.lines.map(l => l.id === currentSelectedData.item.id ? { ...l, name: val } : l) }));
+                          } else if (currentSelectedData.category === 'area') {
+                            setMapData(prev => ({ ...prev, areas: prev.areas.map(a => a.id === currentSelectedData.item.id ? { ...a, name: val } : a) }));
+                          }
+                        }}
+                        className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-amber-300 font-bold font-serif text-base focus:outline-none focus:border-amber-500 shadow-inner"
+                      />
+                      <span className="text-xs text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">[{currentSelectedData.item.type}]</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const targetId = currentSelectedData.item.id;
+                          const cat = currentSelectedData.category;
+                          if (cat === 'point') {
+                            setMapData(prev => ({ ...prev, points: prev.points.filter(p => p.id !== targetId) }));
+                          } else if (cat === 'line') {
+                            setMapData(prev => ({ ...prev, lines: prev.lines.filter(l => l.id !== targetId) }));
+                          } else if (cat === 'area') {
+                            setMapData(prev => ({ ...prev, areas: prev.areas.filter(a => a.id !== targetId) }));
+                          }
+                          setSelectedElement(null);
+                        }}
+                        className="text-red-400 hover:text-red-200 text-xs px-3 py-1.5 rounded bg-red-950/70 hover:bg-red-900 border border-red-800/80 transition shadow cursor-pointer font-serif flex items-center gap-1.5"
+                        title="点击直接从地图中删除本要素"
+                      >
+                        <span>🗑️</span> 删除要素
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedElement(null);
+                        }}
+                        className="text-slate-400 hover:text-white text-base px-1.5"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 坐标数据与设定描述快速编辑 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                    {currentSelectedData.category === 'point' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-300 font-mono text-xs">坐标(X, Y) {mapData.meta.coordUnit || 'km'}:</span>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={currentSelectedData.item.coord[0]}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setMapData(prev => ({
+                              ...prev,
+                              points: prev.points.map(p => p.id === currentSelectedData.item.id ? { ...p, coord: [val, p.coord[1]] } : p)
+                            }));
+                          }}
+                          className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                        />
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={currentSelectedData.item.coord[1]}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setMapData(prev => ({
+                              ...prev,
+                              points: prev.points.map(p => p.id === currentSelectedData.item.id ? { ...p, coord: [p.coord[0], val] } : p)
+                            }));
+                          }}
+                          className="w-20 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-xs"
+                        />
+                      </div>
+                    )}
+                    {currentSelectedData.category === 'line' && (
+                      <div className="text-slate-300 font-mono text-xs truncate">
+                        折线控制点: {currentSelectedData.item.points.map(p => `(${p[0]},${p[1]})`).join(' -> ')}
+                      </div>
+                    )}
+                    {currentSelectedData.category === 'area' && (
+                      <div className="flex items-center gap-2 flex-wrap text-slate-300 md:col-span-2">
+                        <span className="text-slate-300 font-mono text-xs">拟合圆列表:</span>
+                        {currentSelectedData.item.circles.map((c, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded border border-slate-700">
+                            <span className="text-xs text-amber-400 font-mono">圆#{idx+1} 半径:</span>
+                            <input
+                              type="number"
+                              step="1"
+                              value={c.radius}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseFloat(e.target.value) || 1);
+                                setMapData(prev => ({
+                                  ...prev,
+                                  areas: prev.areas.map(a => {
+                                    if (a.id !== currentSelectedData.item.id) return a;
+                                    const newCircles = [...a.circles];
+                                    newCircles[idx] = { ...newCircles[idx], radius: val };
+                                    return { ...a, circles: newCircles };
+                                  })
+                                }));
+                              }}
+                              className="w-14 bg-transparent text-slate-100 font-mono text-xs focus:outline-none border-b border-slate-600 text-center"
+                            />
+                            <span className="text-xs text-slate-400 font-mono">{mapData.meta.coordUnit || 'km'}</span>
+                            {currentSelectedData.item.circles.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMapData(prev => ({
+                                    ...prev,
+                                    areas: prev.areas.map(a => {
+                                      if (a.id !== currentSelectedData.item.id) return a;
+                                      return { ...a, circles: a.circles.filter((_, ci) => ci !== idx) };
+                                    })
+                                  }));
+                                }}
+                                className="text-red-400 hover:text-red-200 text-sm px-1"
+                                title="删除该拟合圆"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const lastC = currentSelectedData.item.circles[currentSelectedData.item.circles.length - 1];
+                            const newCenter = [lastC.center[0] + 15, lastC.center[1]];
+                            setMapData(prev => ({
+                              ...prev,
+                              areas: prev.areas.map(a => {
+                                if (a.id !== currentSelectedData.item.id) return a;
+                                return { ...a, circles: [...a.circles, { center: newCenter, radius: lastC.radius * 0.8 }] };
+                              })
+                            }));
+                          }}
+                          className="px-2.5 py-1 bg-amber-950/60 hover:bg-amber-900/80 text-amber-300 border border-amber-800/80 rounded text-xs font-serif transition"
+                          title="为当前面域追加一个组合圆，形成更丰富连绵的不规则生态区"
+                        >
+                          ➕ 追加子圆 (扩展范围)
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="md:col-span-2">
+                      <label className="block text-slate-300 text-xs mb-1 font-serif">小说世界观设定与地理风土描述：</label>
+                      <textarea
+                        rows="2"
+                        value={currentSelectedData.item.desc}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (currentSelectedData.category === 'point') {
+                            setMapData(prev => ({ ...prev, points: prev.points.map(p => p.id === currentSelectedData.item.id ? { ...p, desc: val } : p) }));
+                          } else if (currentSelectedData.category === 'line') {
+                            setMapData(prev => ({ ...prev, lines: prev.lines.map(l => l.id === currentSelectedData.item.id ? { ...l, desc: val } : l) }));
+                          } else if (currentSelectedData.category === 'area') {
+                            setMapData(prev => ({ ...prev, areas: prev.areas.map(a => a.id === currentSelectedData.item.id ? { ...a, desc: val } : a) }));
+                          }
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-slate-200 font-serif text-sm focus:outline-none focus:border-amber-500 shadow-inner"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ==================================================== */}
+          {/* 3. 右侧 PS 图层管理器与数据引擎控制面板 */}
+          {/* ==================================================== */}
+          <div className="w-96 bg-[#141721] border-l border-[#232736] flex flex-col h-full z-20 flex-shrink-0">
+            {/* 顶栏 Tab 切换 (极简两分法：图层 / 设定与数据) */}
+            <div className="flex border-b border-[#232736] bg-[#10121a] text-sm font-bold font-serif">
+              <button
+                onClick={() => setActiveTab('layers')}
+                className={`flex-1 py-3 text-center border-b-2 transition ${activeTab === 'layers' ? 'border-amber-500 text-amber-400 bg-slate-800/30' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+              >
+                📑 图层与要素
+              </button>
+              <button
+                onClick={() => setActiveTab('data')}
+                className={`flex-1 py-3 text-center border-b-2 transition ${activeTab === 'data' ? 'border-amber-500 text-amber-400 bg-slate-800/30' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+              >
+                📊 设定与数据
+              </button>
+            </div>
+
+            {/* TAB 1: PS 图层管理器 (可独立隐藏特定类别) */}
+            {activeTab === 'layers' && (
+              <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+                <div className="text-sm text-slate-300 font-serif leading-relaxed">
+                  💡 <span className="text-amber-400 font-bold">图层可见性开关</span>：点击眼睛图标可随时隐藏/显示特定类别的要素，方便聚焦绘制。
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {LAYER_DEFINITIONS.map(layer => {
+                    const isVisible = layerVisibility[layer.id];
+                    // 统计属于该图层的要素数量
+                    const pointCount = mapData.points.filter(p => TYPE_STYLES[p.type]?.layer === layer.id).length;
+                    const lineCount = mapData.lines.filter(l => TYPE_STYLES[l.type]?.layer === layer.id).length;
+                    const areaCount = mapData.areas.filter(a => TYPE_STYLES[a.type]?.layer === layer.id).length;
+                    const totalItems = pointCount + lineCount + areaCount;
+
+                    return (
+                      <div
+                        key={layer.id}
+                        className={`flex items-center justify-between p-3 rounded-lg border transition ${isVisible ? 'bg-slate-800/40 border-slate-700/60 text-slate-200' : 'bg-slate-900/30 border-slate-800/40 text-slate-500 opacity-60'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => toggleLayer(layer.id)}
+                            className={`w-8 h-8 rounded flex items-center justify-center text-base transition ${isVisible ? 'bg-amber-600/30 text-amber-400 border border-amber-500/50' : 'bg-slate-800 text-slate-600 border border-slate-700'}`}
+                            title={isVisible ? '点击隐藏本图层' : '点击显示本图层'}
+                          >
+                            {isVisible ? '👁️' : '🕶️'}
+                          </button>
+                          <div>
+                            <span className="font-bold text-sm flex items-center gap-1.5 font-serif">
+                              <span>{layer.icon}</span>
+                              <span>{layer.name}</span>
+                            </span>
+                            <span className="text-xs text-slate-500 font-mono block">包含 {totalItems} 个要素</span>
+                          </div>
+                        </div>
+
+                        <span className={`text-xs px-2 py-0.5 rounded font-mono ${isVisible ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/60' : 'bg-slate-800 text-slate-500'}`}>
+                          {isVisible ? '可见' : '隐藏'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="w-full h-[1px] bg-slate-800 my-1"></div>
+
+                {/* 元素列表快速定位 */}
+                <div className="flex-1 flex flex-col min-h-0">
+                  <div className="flex items-center justify-between mb-2 flex-shrink-0">
+                    <h4 className="font-bold text-sm text-slate-200 font-serif flex items-center gap-1.5">
+                      <span>📌</span> 全要素快速清单 ({mapData.points.length + mapData.lines.length + mapData.areas.length})
+                    </h4>
+                    <span className="text-[11px] text-amber-400 font-serif">⚡ 双击直达</span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-1.5 custom-scrollbar">
+                    {mapData.points.map(pt => (
+                      <button
+                        key={pt.id}
+                        onClick={() => setSelectedElement({ category: 'point', id: pt.id })}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedElement({ category: 'point', id: pt.id });
+                          jumpToCoord(pt.coord);
+                        }}
+                        title="单击选择并查看属性，双击平移画板直达此据点"
+                        className={`text-left px-2.5 py-2 rounded text-xs flex items-center justify-between transition ${selectedElement?.id === pt.id ? 'bg-amber-600/30 text-amber-300 border border-amber-500/60 font-bold' : 'bg-slate-800/20 text-slate-300 hover:bg-slate-800/60'}`}
+                      >
+                        <span className="truncate text-sm font-serif">🏰 {pt.name}</span>
+                        <span className="text-xs text-slate-400 font-mono">({pt.coord[0]}, {pt.coord[1]})</span>
+                      </button>
+                    ))}
+                    {mapData.lines.map(l => {
+                      // 折线取中点坐标作为跳转锚点
+                      const midIdx = Math.floor(l.points.length / 2);
+                      const midCoord = l.points[midIdx] || l.points[0];
+                      return (
+                        <button
+                          key={l.id}
+                          onClick={() => setSelectedElement({ category: 'line', id: l.id })}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedElement({ category: 'line', id: l.id });
+                            jumpToCoord(midCoord);
+                          }}
+                          title="单击选择并高亮线条，双击平移画板直达线条中心"
+                          className={`text-left px-2.5 py-2 rounded text-xs flex items-center justify-between transition ${selectedElement?.id === l.id ? 'bg-amber-600/30 text-amber-300 border border-amber-500/60 font-bold' : 'bg-slate-800/20 text-slate-300 hover:bg-slate-800/60'}`}
+                        >
+                          <span className="truncate text-sm font-serif">〰️ {l.name}</span>
+                          <span className="text-xs text-slate-400 font-mono">[{l.type}]</span>
+                        </button>
+                      );
+                    })}
+                    {mapData.areas.map(a => {
+                      // 面域取首个圆心作为跳转锚点
+                      const centerCoord = a.circles[0]?.center || [0, 0];
+                      return (
+                        <button
+                          key={a.id}
+                          onClick={() => setSelectedElement({ category: 'area', id: a.id })}
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedElement({ category: 'area', id: a.id });
+                            jumpToCoord(centerCoord);
+                          }}
+                          title="单击选择并显示控制手柄，双击平移画板直达面域中心"
+                          className={`text-left px-2.5 py-2 rounded text-xs flex items-center justify-between transition ${selectedElement?.id === a.id ? 'bg-amber-600/30 text-amber-300 border border-amber-500/60 font-bold' : 'bg-slate-800/20 text-slate-300 hover:bg-slate-800/60'}`}
+                        >
+                          <span className="truncate text-sm font-serif">🌐 {a.name}</span>
+                          <span className="text-xs text-slate-400 font-mono">[{a.type}]</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: 合并聚合的【设定与数据】模块 (含拓扑报告 / JSON代码 / AI协议) */}
+            {activeTab === 'data' && (
+              <div className="flex-1 flex flex-col h-full overflow-hidden p-3 gap-3">
+                {/* 内部三合一胶囊切换器 */}
+                <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs font-serif font-bold flex-shrink-0">
+                  <button
+                    onClick={() => setDataSubTab('report')}
+                    className={`flex-1 py-1.5 rounded transition ${dataSubTab === 'report' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    📊 拓扑分析
+                  </button>
+                  <button
+                    onClick={() => setDataSubTab('code')}
+                    className={`flex-1 py-1.5 rounded transition ${dataSubTab === 'code' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    💻 坐标数据
+                  </button>
+                  <button
+                    onClick={() => setDataSubTab('prompt')}
+                    className={`flex-1 py-1.5 rounded transition ${dataSubTab === 'prompt' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                  >
+                    📋 AI指令协议
+                  </button>
+                </div>
+
+                {/* 子面板 1: 拓扑报告 */}
+                {dataSubTab === 'report' && (
+                  <div className="flex-1 flex flex-col min-h-0 gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">自动根据几何运算生成，可直接投喂给任意大模型：</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(spatialReport);
+                          alert('📋 已复制空间分析报告到剪贴板！');
+                        }}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs rounded border border-slate-700 font-serif flex-shrink-0"
+                      >
+                        复制报告
+                      </button>
+                    </div>
+                    <pre className="flex-1 p-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-[11px] overflow-y-auto leading-relaxed select-text custom-scrollbar whitespace-pre-wrap">
+                      {spatialReport}
+                    </pre>
+                  </div>
+                )}
+
+                {/* 子面板 2: 坐标 JSON */}
+                {dataSubTab === 'code' && (
+                  <div className="flex-1 flex flex-col min-h-0 gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">底层标准 JSON 坐标数据集，支持双向修改：</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(jsonCodeInput);
+                            alert('📋 已复制 JSON 坐标数据集！');
+                          }}
+                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded border border-slate-700 font-serif"
+                        >
+                          复制
+                        </button>
+                        <button
+                          onClick={applyJsonCode}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded shadow"
+                        >
+                          应用更改
+                        </button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={jsonCodeInput}
+                      onChange={(e) => setJsonCodeInput(e.target.value)}
+                      className="flex-1 w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-amber-300/90 font-mono text-[11px] leading-relaxed focus:outline-none focus:border-amber-600 select-text resize-none custom-scrollbar"
+                    />
+                  </div>
+                )}
+
+                {/* 子面板 3: AI 指令协议 */}
+                {dataSubTab === 'prompt' && (
+                  <div className="flex-1 flex flex-col min-h-0 gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-400">投喂给外部大模型（如网页版 ChatGPT/Claude）的标准规则：</span>
+                      <button
+                        onClick={copySystemPrompt}
+                        className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-serif font-bold text-xs rounded shadow"
+                      >
+                        {copiedTip ? '✓ 已复制' : '复制 Prompt'}
+                      </button>
+                    </div>
+                    <pre className="flex-1 p-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-[11px] overflow-y-auto leading-relaxed select-text custom-scrollbar whitespace-pre-wrap">
+                      {SYSTEM_PROMPT_TEMPLATE}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+              {/* AI 模型接口设置弹窗 */}
+              {isAiConfigOpen && (
+                <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4">
+                  <div className="bg-[#181b26] border-2 border-amber-600/70 rounded-xl w-[460px] max-w-full p-6 text-slate-200 shadow-2xl flex flex-col gap-4 animate-in zoom-in-95 duration-200">
+                    <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
+                      <h3 className="font-serif font-bold text-base text-amber-300 flex items-center gap-2">
+                        ⚙️ AI 接口与模型配置
+                      </h3>
+                      <button onClick={() => setIsAiConfigOpen(false)} className="text-slate-400 hover:text-white">✕</button>
+                    </div>
+
+                    <div className="text-xs text-slate-400 leading-relaxed font-serif">
+                      直接输入你的大模型 API Key（兼容所有 OpenAI 规范的服务，如 **DeepSeek、Moonshot/Kimi、通义千问、GPT-4o、Claude** 等）。
+                      <div className="mt-1 text-[11px] text-amber-300/80 bg-amber-950/30 p-2 rounded border border-amber-900/40">
+                        💡 提示：若第三方转发商未开放浏览器跨域头（CORS），可双击运行文件夹内的 <b>【启动本地代理(解决跨域).bat】</b>，并将 API URL 设为 <code>http://127.0.0.1:3000</code> 即可畅通无阻！
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3 text-xs">
+                      <div>
+                        <label className="block text-slate-300 font-bold mb-1">API Base URL</label>
+                        <input
+                          type="text"
+                          value={aiConfig.apiUrl}
+                          onChange={e => setAiConfig({ ...aiConfig, apiUrl: e.target.value })}
+                          placeholder="例如: https://api.deepseek.com 或 https://api.openai.com/v1"
+                          className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono text-xs focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 font-bold mb-1">API Key (密钥)</label>
+                        <input
+                          type="password"
+                          value={aiConfig.apiKey}
+                          onChange={e => setAiConfig({ ...aiConfig, apiKey: e.target.value })}
+                          placeholder="sk-..."
+                          className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono text-xs focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+
+                      {/* 自动获取模型列表按钮与下拉选择器 */}
+                      <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800 flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-amber-300 font-bold text-xs font-serif">选择模型 (Model)</label>
+                          <button
+                            type="button"
+                            onClick={() => fetchAvailableModels()}
+                            disabled={fetchingModels || !aiConfig.apiUrl || !aiConfig.apiKey}
+                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded text-xs font-serif flex items-center gap-1 transition shadow"
+                          >
+                            <span>🔄</span>
+                            <span>{fetchingModels ? '正在读取中...' : '读取可用模型'}</span>
+                          </button>
+                        </div>
+
+                        {fetchModelsError && (
+                          <div className="text-[11px] text-red-400 bg-red-950/40 p-2 rounded border border-red-900/50 leading-relaxed">
+                            ⚠️ {fetchModelsError}
+                          </div>
+                        )}
+
+                        {fetchedModels.length > 0 ? (
+                          <div>
+                            <select
+                              value={aiConfig.model}
+                              onChange={e => setAiConfig({ ...aiConfig, model: e.target.value })}
+                              className="w-full p-2 bg-slate-950 border border-amber-600/60 rounded text-amber-200 font-mono text-xs focus:outline-none cursor-pointer"
+                            >
+                              {fetchedModels.map(m => (
+                                <option key={m} value={m} className="bg-slate-900 text-slate-200">{m}</option>
+                              ))}
+                            </select>
+                            <span className="text-[10px] text-slate-500 mt-1 block">已成功从服务端获取到 {fetchedModels.length} 个可用模型</span>
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={aiConfig.model}
+                            onChange={e => setAiConfig({ ...aiConfig, model: e.target.value })}
+                            placeholder="可点击上方【读取可用模型】或手动输入模型名 (如 deepseek-chat, gpt-4o)"
+                            className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 font-mono text-xs focus:outline-none focus:border-amber-500"
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 border-t border-slate-700/80 pt-3">
+                      <button onClick={() => setIsAiConfigOpen(false)} className="px-4 py-1.5 bg-slate-800 text-slate-300 rounded text-xs">取消</button>
+                      <button
+                        onClick={() => {
+                          saveAiConfig(aiConfig);
+                          setIsAiConfigOpen(false);
+                        }}
+                        className="px-5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-bold font-serif shadow"
+                      >
+                        保存配置
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<NovelMapStudio />);
+  </script>
+</body>
+</html>
