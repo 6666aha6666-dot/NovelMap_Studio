@@ -51,7 +51,7 @@
 │   ├── proxy.js                # Node.js 轻量通用 API 跨域中转服务
 │   └── 启动本地代理(解决跨域).bat
 │
-├── docs/                       # 📚 开发协议与工程档案
+└── docs/                       # 📚 开发协议与工程档案
     ├── MAP_SPEC.md             # 笛卡尔空间坐标协议标准规范 (NWM-CP v1.0)
     └── PROJECT_LOG.md          # 详细工程演进与测试日志
 
